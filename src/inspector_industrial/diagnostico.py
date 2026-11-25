@@ -67,6 +67,11 @@ Reglas:
   NO CRITICO; usa la del defecto más grave de la pieza.
 - En referencias, copia exactamente el encabezado de cada sección usada
   (por ejemplo "Sección 4. Grietas finas en red (crazing)").
+- Este diagnóstico se reutiliza para todas las piezas con los mismos tipos de
+  defecto y el mismo estado. No menciones cifras concretas de esta pieza
+  (confianzas, áreas, número de detecciones ni nombre de la imagen).
+- En defecto, pon solo el nombre del defecto principal (por ejemplo
+  "Grietas finas en red (crazing)").
 - Sé conciso: una o dos frases por campo."""
 
 

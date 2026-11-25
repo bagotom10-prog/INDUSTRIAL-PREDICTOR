@@ -48,7 +48,13 @@ Los resultados quedan en `runs/detect/inspeccion_real/`:
 - `reporte_inspeccion.json`: para cada pieza, sus defectos (confianza, área, dictamen), su estado, los motivos y el diagnóstico.
 - `informe_inspeccion.html`: informe técnico con resumen, criterios aplicados y detalle por pieza filtrable por estado.
 
-Con `--diagnostico llm` se llama a Claude una sola vez por cada combinación distinta de defectos y estado, no por cada pieza.
+Para usar Claude, pasa el archivo `.env` con la clave:
+
+```bash
+uv run --env-file .env inspector-industrial inspeccionar --diagnostico llm
+```
+
+Se llama a Claude una sola vez por cada combinación distinta de defectos y estado, no por cada pieza: las 360 piezas de validación necesitan 13 llamadas.
 
 ### API web
 

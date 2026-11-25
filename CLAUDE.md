@@ -25,7 +25,7 @@ uv run pytest                                  # tests (45; los de API necesitan
 uv run pytest tests/test_criterios.py::test_critico_rechaza   # un test
 uv run inspector-industrial preparar           # descargar y convertir NEU-DET
 uv run inspector-industrial entrenar           # entrenar (yolo11n, 640 px, 50 épocas)
-uv run inspector-industrial inspeccionar       # lote -> JSON + HTML (--diagnostico auto|llm|reglas|ninguno)
+uv run --env-file .env inspector-industrial inspeccionar   # lote -> JSON + HTML (--diagnostico auto|llm|reglas|ninguno)
 uv run inspector-industrial servir             # API en :8000 (/docs)
 uv run inspector-industrial buscar "consulta"  # probar la búsqueda en el manual
 uv run python scripts/generar_manual_pdf.py    # regenerar manual/manual_calidad.pdf desde el .md
@@ -65,7 +65,8 @@ YOLO -> criterios -> manual (BM25) -> diagnostico -> JSON / HTML / API
 - **Python 3.14 usa `forkserver`:** los procesos de carga de datos reimportan el script principal. Todo `train`/`val` debe ir bajo `if __name__ == "__main__":` y desde un archivo (no `python -` ni `-c` con workers > 0).
 - En `predict`, una ruta `project` relativa hace que Ultralytics anide la salida en `runs/detect/runs/detect/...`; usar rutas absolutas.
 - El modelo de producción se elige a mano, nunca por orden alfabético de carpetas.
-- El modo `llm` solo se ha probado con un cliente simulado: no había credenciales de Anthropic en este equipo.
+- La clave de Anthropic va en `.env` (ignorado por git), **nunca en `.env.example`**, que sí se versiona. El programa no lee `.env` solo: usar `uv run --env-file .env ...` (y `docker run --env-file .env` en Docker).
+- Modo `llm` probado con la API real el 2026-11-25: lote de 360 piezas = 13 llamadas, todas válidas. El diagnóstico se reutiliza entre piezas equivalentes, por eso el prompt prohíbe cifras concretas de una pieza.
 
 ## Datos y modelos
 
