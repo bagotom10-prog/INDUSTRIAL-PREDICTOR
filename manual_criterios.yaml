@@ -1,0 +1,54 @@
+# Manual de criterios de aceptación de piezas.
+#
+# ATENCIÓN: las gravedades y límites son VALORES DE EJEMPLO para el dataset
+# NEU-DET, no proceden de ninguna norma. Sustitúyelos por los del manual de
+# calidad real antes de usar el sistema en planta.
+#
+# Cómo se decide cada pieza (ver src/inspector_industrial/criterios.py):
+#   1. Una detección solo cuenta si su confianza >= conf_deteccion de su clase.
+#   2. Cada defecto se dictamina según la gravedad de su clase:
+#        CRITICO    -> rechazo
+#        REVISAR    -> revisión manual
+#        NO CRITICO -> tolerado, salvo que la caja ocupe más de max_box_size
+#                      de la imagen (entonces rechazo)
+#   3. Un rechazo con confianza < min_confidence no es fiable: pasa a revisión.
+#   4. Pieza: algún rechazo -> RECHAZADA; si no, alguna revisión -> REVISION;
+#      si no -> APROBADA.
+
+version: "0.2-ejemplo"
+
+gravedad: ['CRITICO', 'REVISAR', 'NO CRITICO']
+
+# Fracción máxima de la imagen que puede ocupar un defecto NO CRITICO.
+max_box_size: 0.8
+
+# Confianza por debajo de la cual un rechazo se manda a revisión manual.
+min_confidence: 0.5
+
+# conf_deteccion calibrado sobre el conjunto de validación con el modelo
+# n_640 (ver CLAUDE.md): el más bajo que no genera falsas alarmas apreciables.
+clases:
+  crazing:
+    gravedad: CRITICO
+    conf_deteccion: 0.15
+    descripcion: Red de grietas finas en la superficie; pueden propagarse.
+  inclusion:
+    gravedad: CRITICO
+    conf_deteccion: 0.30
+    descripcion: Material no metálico atrapado en el acero; debilita la pieza.
+  pitted_surface:
+    gravedad: REVISAR
+    conf_deteccion: 0.25
+    descripcion: Picaduras que pueden reducir el espesor útil.
+  rolled-in_scale:
+    gravedad: REVISAR
+    conf_deteccion: 0.20
+    descripcion: Cascarilla de óxido incrustada durante el laminado.
+  patches:
+    gravedad: NO CRITICO
+    conf_deteccion: 0.35
+    descripcion: Manchas superficiales sin pérdida de material.
+  scratches:
+    gravedad: NO CRITICO
+    conf_deteccion: 0.30
+    descripcion: Arañazos superficiales.
