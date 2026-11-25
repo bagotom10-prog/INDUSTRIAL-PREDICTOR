@@ -33,6 +33,7 @@ th { background:var(--suave); font-weight:600; }
 td.num { text-align:right; font-variant-numeric:tabular-nums; }
 .estado { color:#fff; border-radius:12px; padding:1px 10px; font-size:12px;
           font-weight:600; white-space:nowrap; }
+td .meta { font-size:12px; }
 img.mini { width:96px; height:96px; object-fit:cover; border-radius:4px;
            border:1px solid var(--borde); }
 ul { margin:0; padding-left:18px; }
@@ -105,12 +106,25 @@ def generar_html(reporte: dict, ruta: str | Path) -> Path:
         for d in p["defectos"]
     ) or "<li>—</li>"
     motivos = "".join(f"<li>{escape(m)}</li>" for m in p["motivos"])
+    diag = p.get("diagnostico")
+    if diag:
+      refs = "; ".join(diag["referencias"])
+      diagnostico = (
+          f"<b>{escape(diag['defecto'])}</b> · gravedad "
+          f"{escape(diag['gravedad'])}<br><b>Acción:</b> "
+          f"{escape(diag['accion'])}<br><b>Plazo:</b> {escape(diag['plazo'])}"
+          f"<br><span class=meta>{escape(refs)} · {escape(diag['origen'])}"
+          f"</span>"
+      )
+    else:
+      diagnostico = "—"
     filas_piezas.append(
         f'<tr data-estado="{escape(p["estado"])}">'
         f'<td><a href="{img}"><img class="mini" src="{img}" alt="{img}" '
         f'loading="lazy"></a></td>'
         f"<td>{img}</td><td>{_estado(p['estado'])}</td>"
-        f"<td><ul>{defectos}</ul></td><td><ul>{motivos}</ul></td></tr>"
+        f"<td><ul>{defectos}</ul></td><td><ul>{motivos}</ul></td>"
+        f"<td>{diagnostico}</td></tr>"
     )
 
   filtros = "".join(
@@ -128,7 +142,8 @@ def generar_html(reporte: dict, ruta: str | Path) -> Path:
 <p class="meta">{escape(reporte['fecha'])} · Modelo:
 <code>{escape(reporte['modelo'])}</code> · Imágenes:
 <code>{escape(reporte.get('fuente', ''))}</code> · Manual
-{escape(str(manual.get('version', '')))}</p>
+{escape(str(manual.get('version', '')))} · Diagnóstico:
+{escape(reporte.get('diagnostico_modo', 'ninguno'))}</p>
 <div class="tarjetas"><div class="tarjeta">Piezas inspeccionadas
 <b>{r['total_piezas']}</b>&nbsp;</div>{tarjetas}</div>
 <p class="aviso">Los criterios de aceptación del manual
@@ -149,7 +164,8 @@ Los defectos NO CRITICO se toleran si ocupan como máximo el
 <div class="filtros">{filtros}</div>
 <div class="tabla"><table>
 <tr><th>Imagen</th><th>Archivo</th><th>Estado</th>
-<th>Defectos (clase · confianza · área · dictamen)</th><th>Motivo</th></tr>
+<th>Defectos (clase · confianza · área · dictamen)</th><th>Motivo</th>
+<th>Diagnóstico</th></tr>
 {''.join(filas_piezas)}</table></div>
 <script>{JS}</script>
 </body></html>

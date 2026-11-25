@@ -1,60 +1,74 @@
-"""Detecta defectos con YOLO, aplica el manual y genera reporte JSON + HTML."""
+"""Estación 1 y orquestación: detecta defectos con YOLO, aplica el manual de
+criterios, busca en el manual de calidad y diagnostica cada pieza.
+
+`Inspector` carga todo una vez y analiza imágenes sueltas (lo usa la API).
+`inspeccionar` recorre una carpeta y escribe el reporte JSON y el informe HTML.
+
+Las rutas por defecto se pueden cambiar con variables de entorno (útil en
+Docker): INSPECTOR_PESOS, INSPECTOR_CRITERIOS, INSPECTOR_MANUAL_PDF.
+"""
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 from . import criterios
+from .diagnostico import Diagnosticador
 from .informe import generar_html
+from .manual import MANUAL_PDF_POR_DEFECTO, BuscadorManual
 
 # Modelo aprobado para producción. Cámbialo solo tras comparar métricas.
-PESOS_POR_DEFECTO = "runs/detect/n_640/weights/best.pt"
+PESOS_POR_DEFECTO = os.environ.get(
+    "INSPECTOR_PESOS", "runs/detect/n_640/weights/best.pt")
+MANUAL_POR_DEFECTO = os.environ.get(
+    "INSPECTOR_CRITERIOS", "manual_criterios.yaml")
+MANUAL_PDF = os.environ.get("INSPECTOR_MANUAL_PDF", MANUAL_PDF_POR_DEFECTO)
 FUENTE_POR_DEFECTO = "datasets/NEU-DET/images/val"
 SALIDA_POR_DEFECTO = "runs/detect/inspeccion_real"
-MANUAL_POR_DEFECTO = "manual_criterios.yaml"
 
 
-def inspeccionar(pesos=PESOS_POR_DEFECTO, fuente=FUENTE_POR_DEFECTO,
-                 salida=SALIDA_POR_DEFECTO, manual=MANUAL_POR_DEFECTO,
-                 conf=None) -> Path:
-  """Inspecciona `fuente` y devuelve la ruta del reporte JSON.
+class Inspector:
+  def __init__(self, pesos=PESOS_POR_DEFECTO, manual=MANUAL_POR_DEFECTO,
+               manual_pdf=MANUAL_PDF, conf=None, diagnostico="auto"):
+    from ultralytics import YOLO
 
-  conf: si se indica, sustituye el conf_deteccion de todas las clases.
-  """
-  from ultralytics import YOLO
+    self.ruta_pesos = Path(pesos)
+    if not self.ruta_pesos.is_file():
+      raise FileNotFoundError(
+          f"No existe el modelo {self.ruta_pesos}. Indica otro con --pesos"
+          " (o INSPECTOR_PESOS) o entrena uno primero."
+      )
+    self.ruta_manual = str(manual)
+    self.reglas = criterios.cargar_manual(manual)
+    if conf is not None:
+      for regla in self.reglas["clases"].values():
+        regla["conf_deteccion"] = conf
 
-  ruta_pesos = Path(pesos)
-  if not ruta_pesos.is_file():
-    raise FileNotFoundError(
-        f"No existe el modelo {ruta_pesos}. Indica otro con --pesos o"
-        " entrena uno primero."
+    self.modelo = YOLO(self.ruta_pesos)
+    criterios.comprobar_clases(self.reglas, self.modelo.names.values())
+    self.umbral = {n: self.reglas["clases"][n]["conf_deteccion"]
+                   for n in self.modelo.names.values()}
+
+    self.ruta_manual_pdf = manual_pdf
+    buscador = (BuscadorManual.desde_archivo(manual_pdf)
+                if manual_pdf and Path(manual_pdf).is_file() else None)
+    self.diagnosticador = Diagnosticador(self.reglas, buscador, diagnostico)
+
+  def predecir(self, fuente, **kwargs):
+    """Predice con el umbral más bajo del manual; `analizar` filtra después."""
+    return self.modelo.predict(
+        source=fuente, conf=min(self.umbral.values()), verbose=False, **kwargs
     )
-  reglas = criterios.cargar_manual(manual)
-  if conf is not None:
-    for regla in reglas["clases"].values():
-      regla["conf_deteccion"] = conf
 
-  modelo = YOLO(ruta_pesos)
-  criterios.comprobar_clases(reglas, modelo.names.values())
-  umbral = {n: reglas["clases"][n]["conf_deteccion"]
-            for n in modelo.names.values()}
+  def analizar(self, res, nombre: str | None = None):
+    """Convierte un resultado de YOLO en una pieza evaluada y diagnosticada.
 
-  # Ruta absoluta: con una relativa, Ultralytics anidaría la salida en
-  # runs/detect/runs/detect/...
-  dir_salida = Path(salida).resolve()
-  dir_salida.mkdir(parents=True, exist_ok=True)
-
-  # Predice con el umbral más bajo del manual y filtra después por clase.
-  # stream=True procesa imagen a imagen sin acumular todo en memoria.
-  resultados = modelo.predict(
-      source=fuente, conf=min(umbral.values()), stream=True, verbose=False
-  )
-
-  piezas = []
-  for res in resultados:
+    Devuelve (pieza, resultado_filtrado); el segundo sirve para dibujar.
+    """
     validas = [i for i, c in enumerate(res.boxes.cls.tolist())
-               if res.boxes.conf[i] >= umbral[res.names[int(c)]]]
-    res = res[validas] if validas else res[[]]
+               if res.boxes.conf[i] >= self.umbral[res.names[int(c)]]]
+    res = res[validas]
     alto, ancho = res.orig_shape
 
     defectos = []
@@ -68,21 +82,52 @@ def inspeccionar(pesos=PESOS_POR_DEFECTO, fuente=FUENTE_POR_DEFECTO,
       })
     defectos.sort(key=lambda d: d["confianza"], reverse=True)
 
-    nombre = Path(res.path).name
-    res.save(filename=str(dir_salida / nombre))  # imagen con cajas dibujadas
-    piezas.append({
-        "imagen": nombre,
-        **criterios.evaluar_pieza(defectos, reglas),
+    pieza = {
+        "imagen": nombre or Path(res.path).name,
+        **criterios.evaluar_pieza(defectos, self.reglas),
         "num_defectos": len(defectos),
         "defectos": defectos,
-    })
+    }
+    pieza["diagnostico"] = self.diagnosticador.diagnosticar(pieza)
+    return pieza, res
 
+  def info(self) -> dict:
+    return {
+        "modelo": str(self.ruta_pesos),
+        "manual_criterios": {"ruta": self.ruta_manual, **self.reglas},
+        "manual_pdf": str(self.ruta_manual_pdf),
+        "diagnostico_modo": self.diagnosticador.modo,
+    }
+
+
+def inspeccionar(pesos=PESOS_POR_DEFECTO, fuente=FUENTE_POR_DEFECTO,
+                 salida=SALIDA_POR_DEFECTO, manual=MANUAL_POR_DEFECTO,
+                 conf=None, manual_pdf=MANUAL_PDF,
+                 diagnostico="auto") -> Path:
+  """Inspecciona `fuente` y devuelve la ruta del reporte JSON."""
+  inspector = Inspector(pesos, manual, manual_pdf, conf, diagnostico)
+
+  # Ruta absoluta: con una relativa, Ultralytics anidaría la salida en
+  # runs/detect/runs/detect/...
+  dir_salida = Path(salida).resolve()
+  dir_salida.mkdir(parents=True, exist_ok=True)
+
+  piezas = []
+  # stream=True procesa imagen a imagen sin acumular todo en memoria.
+  for res in inspector.predecir(fuente, stream=True):
+    pieza, filtrado = inspector.analizar(res)
+    filtrado.save(filename=str(dir_salida / pieza["imagen"]))
+    piezas.append(pieza)
+
+  info = inspector.info()
   estados = [p["estado"] for p in piezas]
   reporte = {
       "fecha": datetime.now().isoformat(timespec="seconds"),
-      "modelo": str(ruta_pesos),
+      "modelo": info["modelo"],
       "fuente": str(fuente),
-      "manual": {"ruta": str(manual), **reglas},
+      "manual": info["manual_criterios"],
+      "manual_pdf": info["manual_pdf"],
+      "diagnostico_modo": info["diagnostico_modo"],
       "resumen": {
           "total_piezas": len(piezas),
           "aprobadas": estados.count(criterios.APROBADA),
@@ -101,6 +146,8 @@ def inspeccionar(pesos=PESOS_POR_DEFECTO, fuente=FUENTE_POR_DEFECTO,
   r = reporte["resumen"]
   print(f"Reporte JSON: {ruta_json}")
   print(f"Informe HTML: {ruta_html}")
+  print(f"Diagnóstico: {reporte['diagnostico_modo']} "
+        f"({inspector.diagnosticador.llamadas_llm} llamadas al LLM)")
   print(f"Piezas: {r['total_piezas']} | Aprobadas: {r['aprobadas']} | "
         f"Revisión: {r['revision']} | Rechazadas: {r['rechazadas']}")
   return ruta_json
